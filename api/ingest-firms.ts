@@ -17,6 +17,7 @@ type NormalizedRow = {
 
 export default async function handler(req: any, res: any) {
   try {
+    console.log("DB_URL =", process.env.DATABASE_URL);
     const q = req.query;
 
     const API_BASE = (q.api_base as string) || process.env.API_BASE!;
