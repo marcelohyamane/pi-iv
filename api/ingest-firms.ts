@@ -1,7 +1,6 @@
 import { Client } from "pg";
 import { parse } from "csv-parse/sync";
 import crypto from "node:crypto";
-import type { VercelRequest, VercelResponse } from "@vercel/node";
 
 interface FireRow {
   latitude: string;
@@ -14,7 +13,7 @@ interface FireRow {
   frp?: string;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
   try {
     const { source, area, days } = req.query;
     const API_BASE = process.env.API_BASE!;
