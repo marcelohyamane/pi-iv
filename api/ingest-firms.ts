@@ -51,6 +51,7 @@ export default async function handler(req: any, res: any) {
     const client = new Client({
       connectionString: DB_URL,
       application_name: "firms_ingest",
+      ssl: { rejectUnauthorized: false }
     });
     await client.connect();
 
