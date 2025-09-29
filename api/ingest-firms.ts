@@ -15,6 +15,21 @@ type NormalizedRow = {
   frp: number | null;
 };
 
+// Mapeia nomes de fontes para o formato que a API espera
+function normalizeSource(src: string): string {
+  const map: Record<string, string> = {
+    "VIIRS S-NPP (URT+NRT)": "VIIRS_SNPP_NRT",
+    "VIIRS NOAA-20 (URT+NRT)": "VIIRS_NOAA20_NRT",
+    "VIIRS NOAA-21 (URT+NRT)": "VIIRS_NOAA21_NRT",
+    "MODIS (URT+NRT)": "MODIS_NRT",
+    "MODIS (SP)": "MODIS_SP",
+    "VIIRS S-NPP (SP)": "VIIRS_SNPP_SP",
+    "VIIRS NOAA-20 (SP)": "VIIRS_NOAA20_SP",
+    "VIIRS NOAA-21 (SP)": "VIIRS_NOAA21_SP",
+  };
+  return map[src] || src;
+}
+
 export default async function handler(req: any, res: any) {
   try {
     console.log("DB_URL =", process.env.DATABASE_URL);
@@ -51,7 +66,7 @@ export default async function handler(req: any, res: any) {
     const client = new Client({
       connectionString: DB_URL,
       application_name: "firms_ingest",
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
     });
     await client.connect();
 
@@ -101,11 +116,11 @@ async function ingestByBatches(opts: {
   while (remaining > 0) {
     const range = Math.min(maxBlock, remaining);
     const yyyy = endDate.toISOString().slice(0, 10);
+
+    const code = normalizeSource(source);
     const url = `${apiBase}/csv/${encodeURIComponent(
       mapKey
-    )}/${encodeURIComponent(source)}/${encodeURIComponent(
-      area
-    )}/${range}/${yyyy}`;
+    )}/${encodeURIComponent(code)}/${area}/${range}/${yyyy}`;
 
     const resp = await fetch(url);
     const text = await resp.text();
