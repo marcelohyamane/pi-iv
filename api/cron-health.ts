@@ -1,12 +1,14 @@
 // api/cron-health.ts
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { IncomingMessage, ServerResponse } from "http";
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default function handler(req: IncomingMessage, res: ServerResponse) {
   console.log('[cron-health] chamada recebida', {
     ua: req.headers['user-agent'],
     vercelEnv: process.env.VERCEL_ENV,
     now: new Date().toISOString(),
   });
 
-  res.status(200).json({ ok: true, ts: Date.now() });
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify({ ok: true, ts: Date.now() }));
 }
