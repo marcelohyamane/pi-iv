@@ -3,8 +3,36 @@ import { Client } from "pg";
 import { parse } from "csv-parse/sync";
 import crypto from "node:crypto";
 
-type AnyRow = Record<string, string>;
+// =====================================================
+// Util: fetch com timeout + retry exponencial (3 tentativas)
+// =====================================================
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit = {},
+  tries = 3,
+  timeoutMs = 15000
+): Promise<any> {
+  let lastErr: any;
+  for (let i = 0; i < tries; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { ...init, signal: ctrl.signal } as any);
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return resp;
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr = e;
+      // backoff: 0.5s, 1s, 2s
+      const backoff = 500 * Math.pow(2, i);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
 
+type AnyRow = Record<string, string>;
 type NormalizedRow = {
   lat: number;
   lon: number;
@@ -15,7 +43,9 @@ type NormalizedRow = {
   frp: number | null;
 };
 
-// Mapeia nomes de fontes para o formato que a API espera
+// =====================================================
+// Map de fontes (se vierem com nome "amigável")
+// =====================================================
 function normalizeSource(src: string): string {
   const map: Record<string, string> = {
     "VIIRS S-NPP (URT+NRT)": "VIIRS_SNPP_NRT",
@@ -30,10 +60,43 @@ function normalizeSource(src: string): string {
   return map[src] || src;
 }
 
+// =====================================================
+// Handler principal (mantemos req/res como any p/ simplicidade)
+// =====================================================
 export default async function handler(req: any, res: any) {
+  const t0 = Date.now();
+  const ua = String(req.headers["user-agent"] || "");
+  const authHdr = String(req.headers["authorization"] || "");
+  const urlHit = String(req.url || "");
+
+  // (Opcional) exigir CRON_SECRET se definido nas ENVs (Production)
+  if (process.env.CRON_SECRET) {
+    if (authHdr !== `Bearer ${process.env.CRON_SECRET}`) {
+      console.log("[ingest-firms] unauthorized", {
+        ua,
+        urlHit,
+        env: process.env.VERCEL_ENV,
+      });
+      res.status(401).end("Unauthorized");
+      return;
+    }
+  }
+
+  // ⚠️ Não logar segredo do DB. Mascaramos usuário/senha:
+  const dbUrlMasked = process.env.DATABASE_URL
+    ? process.env.DATABASE_URL.replace(/:\/\/[^@]+@/, "://****:****@")
+    : "missing";
+
+  console.log("[ingest-firms] start", {
+    ua,
+    urlHit,
+    env: process.env.VERCEL_ENV,
+    db: dbUrlMasked,
+    now: new Date().toISOString(),
+  });
+
   try {
-    console.log("DB_URL =", process.env.DATABASE_URL);
-    const q = req.query;
+    const q = req.query || {};
 
     const API_BASE = (q.api_base as string) || process.env.API_BASE!;
     const MAP_KEY = (q.map_key as string) || process.env.MAP_KEY!;
@@ -45,6 +108,12 @@ export default async function handler(req: any, res: any) {
     const endDateQ = (q.end_date as string) || ""; // YYYY-MM-DD opcional
 
     if (!API_BASE || !MAP_KEY || !DB_URL || !AREA) {
+      console.error("[ingest-firms] missing envs", {
+        API_BASE: !!API_BASE,
+        MAP_KEY: !!MAP_KEY,
+        DB_URL: !!DB_URL,
+        AREA: !!AREA,
+      });
       return res.status(500).json({
         error: "Faltam variáveis",
         details: {
@@ -68,9 +137,17 @@ export default async function handler(req: any, res: any) {
       application_name: "firms_ingest",
       ssl: { rejectUnauthorized: false },
     });
+
+    // conectar com log de tempo
+    const tConn0 = Date.now();
     await client.connect();
+    console.log("[ingest-firms] db_connected_ms", { ms: Date.now() - tConn0 });
 
     const results: any[] = [];
+    let sumParsed = 0,
+      sumValid = 0,
+      sumInserted = 0;
+
     for (const SRC of sources) {
       const r = await ingestByBatches({
         apiBase: API_BASE,
@@ -80,21 +157,39 @@ export default async function handler(req: any, res: any) {
         totalDays: Math.max(1, DAYS),
         endDateStr: endDateQ,
         client,
+        fetchFn: fetchWithRetry, // usa timeout + retry
       });
       results.push({ source: SRC, ...r });
+      sumParsed += r.parsed;
+      sumValid += r.valid;
+      sumInserted += r.inserted;
     }
 
     await client.end();
-    return res.status(200).json({ ok: true, results });
-  } catch (e: any) {
-    console.error(e);
-    return res.status(500).json({
-      error: "Falha na ingestão",
-      details: e?.message || String(e),
+
+    const payload = {
+      ok: true,
+      results,
+      totals: { parsed: sumParsed, valid: sumValid, inserted: sumInserted },
+    };
+
+    console.log("[ingest-firms] done", {
+      ...payload.totals,
+      durationMs: Date.now() - t0,
     });
+
+    res.status(200).json(payload);
+  } catch (e: any) {
+    console.error("[ingest-firms] error", { message: e?.message, stack: e?.stack });
+    res
+      .status(500)
+      .json({ error: "Falha na ingestão", details: e?.message || String(e) });
   }
 }
 
+// =====================================================
+// Ingestão em blocos com logs por batch
+// =====================================================
 async function ingestByBatches(opts: {
   apiBase: string;
   mapKey: string;
@@ -103,8 +198,11 @@ async function ingestByBatches(opts: {
   totalDays: number;
   endDateStr?: string;
   client: Client;
+  fetchFn?: (url: string, init?: RequestInit) => Promise<any>;
 }) {
   const { apiBase, mapKey, source, area, client } = opts;
+  const fetchFn = opts.fetchFn || (fetch as any);
+
   let remaining = opts.totalDays;
   let endDate = opts.endDateStr ? new Date(opts.endDateStr) : new Date();
   const maxBlock = 10;
@@ -122,8 +220,10 @@ async function ingestByBatches(opts: {
       mapKey
     )}/${encodeURIComponent(code)}/${area}/${range}/${yyyy}`;
 
-    const resp = await fetch(url);
+    const tDl0 = Date.now();
+    const resp = await fetchFn(url);
     const text = await resp.text();
+    const dlMs = Date.now() - tDl0;
 
     if (!resp.ok || /^</.test(text) || /^"?Invalid/i.test(text)) {
       throw new Error(
@@ -146,7 +246,16 @@ async function ingestByBatches(opts: {
       .filter((r): r is NormalizedRow => r !== null);
     totalValid += items.length;
 
-    const batch = 800;
+    console.log("[ingest-firms] batch_download", {
+      source,
+      yyyy,
+      rangeDays: range,
+      rowsParsed: rows.length,
+      rowsValid: items.length,
+      downloadMs: dlMs,
+    });
+
+    const batch = 800; // ajuste se precisar
     for (let i = 0; i < items.length; i += batch) {
       const chunk = items.slice(i, i + batch);
       const params: any[] = [];
@@ -176,6 +285,7 @@ async function ingestByBatches(opts: {
       }
 
       if (values.length) {
+        const tIns0 = Date.now();
         const sql = `
           INSERT INTO public.firms_focos
             (id_firms, satellite, acq_datetime_utc, brightness, confidence, frp, geom)
@@ -183,7 +293,15 @@ async function ingestByBatches(opts: {
           ON CONFLICT (id_firms, acq_datetime_utc) DO NOTHING
         `;
         const rr = await client.query(sql, params);
-        totalInserted += rr.rowCount || 0;
+        const insMs = Date.now() - tIns0;
+        const inserted = rr.rowCount || 0;
+        totalInserted += inserted;
+
+        console.log("[ingest-firms] batch_insert", {
+          rowsChunk: chunk.length,
+          inserted,
+          insertMs: insMs,
+        });
       }
     }
 
@@ -194,12 +312,16 @@ async function ingestByBatches(opts: {
   return { parsed: totalParsed, valid: totalValid, inserted: totalInserted };
 }
 
+// =====================================================
+// Normalização de uma linha do CSV (aceita formatos VIIRS/MODIS)
+// =====================================================
 function normalizeRow(row: AnyRow): NormalizedRow | null {
   const lat = Number(row.latitude);
   const lon = Number(row.longitude);
   const date = (row.acq_date || "").trim();
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || !date) return null;
 
+  // acq_time pode vir "417" (HHmm) ou "04:17"
   let t = (row.acq_time || "").trim();
   let hh = "00",
     mm = "00";
