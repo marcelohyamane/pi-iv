@@ -47,18 +47,75 @@ type NormalizedRow = {
 // Map de fontes (se vierem com nome "amigável")
 // =====================================================
 function normalizeSource(src: string): string {
-  const map: Record<string, string> = {
-    "VIIRS S-NPP (URT+NRT)": "VIIRS_SNPP_NRT",
-    "VIIRS NOAA-20 (URT+NRT)": "VIIRS_NOAA20_NRT",
-    "VIIRS NOAA-21 (URT+NRT)": "VIIRS_NOAA21_NRT",
-    "MODIS (URT+NRT)": "MODIS_NRT",
-    "MODIS (SP)": "MODIS_SP",
-    "VIIRS S-NPP (SP)": "VIIRS_SNPP_SP",
-    "VIIRS NOAA-20 (SP)": "VIIRS_NOAA20_SP",
-    "VIIRS NOAA-21 (SP)": "VIIRS_NOAA21_SP",
+  if (!src) return src;
+  const raw = src.trim();
+
+  // Normaliza variações comuns (case, espaçamentos e símbolos)
+  const key = raw
+    .replace(/\s+/g, ' ')
+    .replace(/[-()]/g, '')       // remove traços e parênteses
+    .replace(/\s*\+\s*/g, '+')   // "URT + NRT" -> "URT+NRT"
+    .toUpperCase()
+    .trim();
+
+  // Códigos válidos aceitos pela API (sem "URT_NRT")
+  const VALID_CODES = new Set([
+    'VIIRS_SNPP_NRT',
+    'VIIRS_NOAA20_NRT',
+    'VIIRS_NOAA21_NRT',
+    'MODIS_NRT',
+    'MODIS_SP',
+    'VIIRS_SNPP_SP',
+    'VIIRS_NOAA20_SP',
+    'VIIRS_NOAA21_SP',
+  ]);
+
+  // Se já veio como código e for válido, devolve como está
+  if (VALID_CODES.has(raw.toUpperCase())) return raw.toUpperCase();
+
+  // Mapeia nomes “amigáveis” (inclui suas variantes)
+  const ALIASES: Record<string, string> = {
+    'VIIRS S NPP URT+NRT': 'VIIRS_SNPP_NRT',
+    'VIIRS SNPP URT+NRT' : 'VIIRS_SNPP_NRT',
+    'VIIRS S NPP'        : 'VIIRS_SNPP_NRT',
+    'VIIRS S NPP NRT'    : 'VIIRS_SNPP_NRT',
+
+    'VIIRS NOAA 20 URT+NRT': 'VIIRS_NOAA20_NRT',
+    'VIIRS NOAA20 URT+NRT' : 'VIIRS_NOAA20_NRT',
+    'VIIRS NOAA 20'        : 'VIIRS_NOAA20_NRT',
+    'VIIRS NOAA 20 NRT'    : 'VIIRS_NOAA20_NRT',
+
+    'VIIRS NOAA 21 URT+NRT': 'VIIRS_NOAA21_NRT',
+    'VIIRS NOAA21 URT+NRT' : 'VIIRS_NOAA21_NRT',
+    'VIIRS NOAA 21'        : 'VIIRS_NOAA21_NRT',
+    'VIIRS NOAA 21 NRT'    : 'VIIRS_NOAA21_NRT',
+
+    'MODIS URT+NRT': 'MODIS_NRT',
+    'MODIS NRT'    : 'MODIS_NRT',
+    'MODIS'        : 'MODIS_NRT',
+
+    'MODIS SP'           : 'MODIS_SP',
+    'VIIRS S NPP SP'     : 'VIIRS_SNPP_SP',
+    'VIIRS NOAA 20 SP'   : 'VIIRS_NOAA20_SP',
+    'VIIRS NOAA 21 SP'   : 'VIIRS_NOAA21_SP',
   };
-  return map[src] || src;
+
+  // Corrige entradas do tipo "VIIRS_SNPP_URT_NRT" para "VIIRS_SNPP_NRT"
+  if (/^VIIRS_(SNPP|NOAA20|NOAA21)_URT_NRT$/.test(raw.toUpperCase()))
+    return raw.toUpperCase().replace('_URT_NRT', '_NRT');
+
+  // Tenta mapear nome amigável
+  if (ALIASES[key]) return ALIASES[key];
+
+  // Último recurso: se vier algo tipo "VIIRS SNPP" sem sufixo, assume NRT
+  if (/^VIIRS\s+SNPP$/i.test(raw)) return 'VIIRS_SNPP_NRT';
+  if (/^VIIRS\s+NOAA[-\s]*20$/i.test(raw)) return 'VIIRS_NOAA20_NRT';
+  if (/^VIIRS\s+NOAA[-\s]*21$/i.test(raw)) return 'VIIRS_NOAA21_NRT';
+
+  // Mantém como veio (pode falhar e te mostrar no log)
+  return raw;
 }
+
 
 // =====================================================
 // Handler principal (mantemos req/res como any p/ simplicidade)
