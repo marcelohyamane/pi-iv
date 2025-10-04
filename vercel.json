@@ -4,6 +4,8 @@
     {
       "path": "/api/ingest-firms",
       "schedule": "0 3 * * *"
-    }
+    },
+    { "path": "/api/cron-health",
+    "schedule": "*/10 * * * *" }
   ]
 }
