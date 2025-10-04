@@ -2,7 +2,6 @@
   "version": 2,
   "functions": {
     "api/cron-health.ts": {
-      "runtime": "nodejs20.x",
       "maxDuration": 60
     }
   },
@@ -13,3 +12,4 @@
     }
   ]
 }
+
