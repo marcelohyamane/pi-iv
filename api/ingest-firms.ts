@@ -139,7 +139,7 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  // ⚠️ Não logar segredo do DB. Mascaramos usuário/senha:
+  // DB. Mascaramos usuário/senha no console log:
   const dbUrlMasked = process.env.DATABASE_URL
     ? process.env.DATABASE_URL.replace(/:\/\/[^@]+@/, "://****:****@")
     : "missing";
