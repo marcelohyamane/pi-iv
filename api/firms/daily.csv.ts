@@ -1,6 +1,8 @@
 // api/firms/daily.csv.ts
+// topo do arquivo
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { Pool } from 'pg';
+import { poolRead } from '../_lib/db_read'; // << usar o seu pool
+
 
 // ===== Pool de leitura (readonly) =====
 const connStr = process.env.DATABASE_URL_READONLY ?? process.env.DATABASE_URL;
