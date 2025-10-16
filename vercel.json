@@ -1,19 +1,4 @@
-{
-  "version": 2,
-  "functions": {
-    "api/**/*.ts": {
-      "memory": 1024,
-      "maxDuration": 10
-    },
-    "api/ingest-firms.ts": {
-      "memory": 1024,
-      "maxDuration": 60
-    }
-  },
-  "crons": [
-    { "path": "/api/ingest-firms", "schedule": "0 3 * * *" }
-  ]
-}
+{ "version": 2, "functions": { "api/ingest-firms.ts": { "maxDuration": 60 } }, "crons": [{ "path": "/api/ingest-firms", "schedule": "0 3 * * *" }] }
 
 
 
