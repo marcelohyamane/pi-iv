@@ -2,6 +2,17 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { poolRead } from '../_lib/db_read'; // usa o pool central
 
+// helper pra ler o host usado pelo Pool (apenas da env)
+function maskConn(u?: string) {
+  if (!u) return "n/a";
+  try {
+    const x = new URL(u);
+    return `${x.host}${x.port ? ":" + x.port : ""}`;
+  } catch { return "parse_error"; }
+}
+const DB_USED = maskConn(process.env.DATABASE_URL_READONLY);
+
+
 // ===== Utils locais =====
 function clampWindow(from: Date, to: Date): { from: Date; to: Date } {
   const MAX_DAYS = 90;
@@ -100,6 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('x-sql-ms', String(sqlMs));
     res.setHeader('x-csv-ms', String(csvMs));
 
+   res.setHeader("x-db-host", DB_USED);
     // ✅ Finaliza a resposta
     res.status(200).send(csv);
   } catch (e: any) {
