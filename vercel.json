@@ -1,9 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "api/ingest-firms.ts": { "maxDuration": 60 }
-  },
-  "crons": [
-    { "path": "/api/ingest-firms", "schedule": "0 3 * * *" }
-  ]
+  "functions": { "api/ingest-firms.ts": { "maxDuration": 60 } },
+  "crons": [{ "path": "/api/ingest-firms", "schedule": "0 3 * * *" }]
 }
