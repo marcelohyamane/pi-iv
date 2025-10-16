@@ -99,7 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const sql = `
       SELECT
-        dt,
+        to_char(dt, 'YYYY-MM-DD') AS dt,
         cod_ibge,
         municipio,
         SUM(focos)        AS focos,
