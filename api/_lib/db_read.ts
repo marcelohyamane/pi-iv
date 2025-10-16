@@ -10,3 +10,8 @@ export const poolRead = new Pool({
   idleTimeoutMillis: 30_000
 });
 
+// Define timeouts por sessão
+poolRead.on("connect", client => {
+  client.query(`SET statement_timeout = '20s'; SET idle_in_transaction_session_timeout = '10s';`).catch(()=>{});
+});
+
