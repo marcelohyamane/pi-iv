@@ -1,50 +1,73 @@
 // api/firms/daily.csv.ts
-import { poolRead } from "../_lib/db_read";
-import { badRequest, serverError } from "../_lib/respond";
-import { getDate, getList } from "../_lib/parse";
-import { requireAuth } from "../_lib/auth";
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { Pool } from 'pg';
 
-// Garante execução em Node (evita edge frio)
-export const config = { runtime: "nodejs" };
+// ===== Pool de leitura (readonly) =====
+const connStr = process.env.DATABASE_URL_READONLY ?? process.env.DATABASE_URL;
+if (!connStr) throw new Error('DATABASE_URL_READONLY (ou DATABASE_URL) não configurada');
 
-// Limita a janela para proteger o backend (ajuste se quiser)
+const poolRead = new Pool({
+  connectionString: connStr,
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+  application_name: 'firms_daily_csv',
+});
+poolRead.on('connect', (client) => {
+  client.query(`
+    SET statement_timeout = '20s';
+    SET idle_in_transaction_session_timeout = '10s';
+  `).catch(() => {});
+});
+
+// ===== Util =====
 function clampWindow(from: Date, to: Date): { from: Date; to: Date } {
   const MAX_DAYS = 90;
   const msDay = 24 * 60 * 60 * 1000;
   const span = Math.ceil((to.getTime() - from.getTime()) / msDay);
-  if (span > MAX_DAYS) {
-    const nf = new Date(to.getTime() - MAX_DAYS * msDay);
-    return { from: nf, to };
-  }
+  if (span > MAX_DAYS) return { from: new Date(to.getTime() - MAX_DAYS * msDay), to };
   return { from, to };
 }
+function parseDate(s?: string | string[] | null): Date | null {
+  if (!s) return null;
+  const v = Array.isArray(s) ? s[0] : s;
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(+d) ? null : d;
+}
+function parseCods(s?: string | string[] | null): string[] {
+  if (!s) return [];
+  const v = Array.isArray(s) ? s[0] : s;
+  return v.split(',').map(x => x.trim()).filter(Boolean);
+}
+function unauthorized(res: VercelResponse) {
+  res.status(401).send('unauthorized');
+}
+function badRequest(res: VercelResponse, msg: string) {
+  res.status(400).send(msg);
+}
 
-type RowMV = {
-  dt: string;              // date (YYYY-MM-DD)
-  focos: number | null;
-  brilho_medio: number | null;
-  brilho_p95: number | null;
-  frp_medio: number | null;
-};
-
-export default async function handler(req: Request): Promise<Response> {
+// ===== Handler Node (finaliza com res.send) =====
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   const t0 = Date.now();
   try {
-    // 🔐 Autenticação (usa x-api-key conforme seu _lib/auth)
-    requireAuth(req);
+    // 🔐 Auth simples por header
+    const apiKey = req.headers['x-api-key'];
+    const expected = process.env.API_KEY;
+    const got = Array.isArray(apiKey) ? apiKey[0] : apiKey;
+    if (!expected || got !== expected) return unauthorized(res);
 
-    // 📅 Datas (default: 90 dias atrás até hoje UTC)
-    const q = new URL(req.url).searchParams;
-    const fromQ = getDate(q, "from", 90);
-    if (!fromQ) return badRequest("Parâmetro 'from' inválido");
-    const toQ = getDate(q, "to") ?? new Date(new Date().toISOString().slice(0, 10));
-    const { from, to } = clampWindow(fromQ, toQ);
+    // 📅 Datas (default: últimos 90 dias até hoje UTC)
+    const fromQ = parseDate(req.query.from);
+    const toQ = parseDate(req.query.to) ?? new Date(new Date().toISOString().slice(0, 10));
+    const fromRaw = fromQ ?? new Date(toQ.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const { from, to } = clampWindow(fromRaw, toQ);
 
-    // 📍 Filtro opcional por município(s)
-    const cods = getList(q, "cod_ibge"); // ex.: ?cod_ibge=3550308,3509502
+    // 📍 Filtro opcional por municípios (?cod_ibge=3550308,3509502)
+    const cods = parseCods(req.query.cod_ibge);
 
-    // 🎯 Consulta *sempre* na MV — sem ORDER BY (o BI ordena depois)
-    // Agregação diária (soma/medias sobre os municípios selecionados, se houver filtro)
+    // 🎯 Consulta SEM ORDER BY; sempre na MV
     const params: any[] = [from, to];
     let where = `dt >= $1::date AND dt < $2::date`;
     if (cods.length) {
@@ -65,36 +88,42 @@ export default async function handler(req: Request): Promise<Response> {
     `;
 
     const tSql0 = Date.now();
-    const { rows } = await poolRead.query<RowMV>(sql, params);
+    const result = await poolRead.query<{
+      dt: string;
+      focos: number | null;
+      brilho_medio: number | null;
+      brilho_p95: number | null;
+      frp_medio: number | null;
+    }>(sql, params);
     const sqlMs = Date.now() - tSql0;
 
-    // 📄 CSV rápido em memória (sem libs/streams)
+    // 📄 Monta CSV em memória
     const tCsv0 = Date.now();
-    const header = "dt,focos,brilho_medio,brilho_p95,frp_medio";
-    const lines = rows.map(r =>
+    const header = 'dt,focos,brilho_medio,brilho_p95,frp_medio';
+    const lines = result.rows.map(r =>
       [
         r.dt,
         r.focos ?? 0,
-        r.brilho_medio ?? "",
-        r.brilho_p95 ?? "",
-        r.frp_medio ?? ""
-      ].join(",")
+        r.brilho_medio ?? '',
+        r.brilho_p95 ?? '',
+        r.frp_medio ?? ''
+      ].join(',')
     );
-    const csv = [header, ...lines].join("\n");
+    const csv = [header, ...lines].join('\n');
     const csvMs = Date.now() - tCsv0;
 
-    // 🧠 Telemetria + Cache CDN (2ª chamada deve vir com x-vercel-cache: HIT)
-    const hdrs = new Headers();
-    hdrs.set("Content-Type", "text/csv; charset=utf-8");
-    hdrs.set("Cache-Control", "s-maxage=900, stale-while-revalidate=3600"); // 15min + SWR 1h
-    hdrs.set("x-rows", String(rows.length));
-    hdrs.set("x-sql-ms", String(sqlMs));
-    hdrs.set("x-csv-ms", String(csvMs));
+    // 🧠 Headers: cache + telemetria
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=3600'); // 15min + SWR 1h
+    res.setHeader('x-rows', String(result.rowCount ?? result.rows.length));
+    res.setHeader('x-sql-ms', String(sqlMs));
+    res.setHeader('x-csv-ms', String(csvMs));
 
-    return new Response(csv, { status: 200, headers: hdrs });
+    // ✅ Finaliza a resposta
+    res.status(200).send(csv);
   } catch (e: any) {
-    if (e instanceof Response) return e; // badRequest/requireAuth podem lançar Response
-    return serverError(e);
+    console.error('[firms/daily.csv] error', e);
+    res.status(500).send('internal error');
   } finally {
     const totalMs = Date.now() - t0;
     console.log(`[firms/daily.csv] total=${totalMs}ms`);
