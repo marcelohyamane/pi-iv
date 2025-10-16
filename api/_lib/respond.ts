@@ -22,7 +22,8 @@ export function okCSV(rows: Array<Record<string, any>>, filename = "export.csv",
     if (v === null || v === undefined) return "";
     const s = String(v);
     return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
+  };
+
   const body = [cols.join(","), ...rows.map(r => cols.map(c => esc(r[c])).join(","))].join("\n");
   return new Response(body, { status: 200, headers });
 }
@@ -41,3 +42,4 @@ export function serverError(e: unknown) {
     headers: { "content-type": "application/json; charset=utf-8" }
   });
 }
+

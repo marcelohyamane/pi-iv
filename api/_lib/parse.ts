@@ -21,3 +21,4 @@ export function getInt(q: URLSearchParams, key: string, def: number, max?: numbe
   if (isNaN(n)) return def;
   return Math.min(max ?? n, n);
 }
+

@@ -1,11 +1,14 @@
 import { poolRead } from "../_lib/db_read";
 import { okCSV, badRequest, serverError } from "../_lib/respond";
 import { getDate, getList } from "../_lib/parse";
+import { requireAuth } from "../_lib/auth";
 
-export const config = { runtime: "nodejs" }; // usa 'pg'
+export const config = { runtime: "nodejs" };
 
 export default async function handler(req: Request) {
   try {
+    requireAuth(req);
+
     const q = new URL(req.url).searchParams;
     const from = getDate(q, "from", 365);
     if (!from) return badRequest("Parâmetro 'from' inválido");
@@ -15,9 +18,9 @@ export default async function handler(req: Request) {
 
     const params: any[] = [from];
     let where = `acq_datetime_utc >= $1`;
-    if (to)               { params.push(to);   where += ` AND acq_datetime_utc < $${params.length}`; }
-    if (cods.length)      { params.push(cods); where += ` AND cod_ibge = ANY($${params.length})`; }
-    if (conf.length)      { params.push(conf); where += ` AND confidence = ANY($${params.length})`; }
+    if (to)          { params.push(to);   where += ` AND acq_datetime_utc < $${params.length}`; }
+    if (cods.length) { params.push(cods); where += ` AND cod_ibge = ANY($${params.length})`; }
+    if (conf.length) { params.push(conf); where += ` AND confidence = ANY($${params.length})`; }
 
     const sql = `
       SELECT
@@ -35,6 +38,8 @@ export default async function handler(req: Request) {
     const { rows } = await poolRead.query(sql, params);
     return okCSV(rows, "firms_daily.csv", 60);
   } catch (e) {
+    if (e instanceof Response) return e;
     return serverError(e);
   }
 }
+

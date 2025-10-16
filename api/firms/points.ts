@@ -1,11 +1,14 @@
 import { poolRead } from "../_lib/db_read";
 import { okJSON, badRequest, serverError } from "../_lib/respond";
 import { getDate, getList, getInt } from "../_lib/parse";
+import { requireAuth } from "../_lib/auth";
 
 export const config = { runtime: "nodejs" };
 
 export default async function handler(req: Request) {
   try {
+    requireAuth(req);
+
     const q = new URL(req.url).searchParams;
     const from = getDate(q, "from", 7);
     if (!from) return badRequest("Parâmetro 'from' inválido");
@@ -37,6 +40,7 @@ export default async function handler(req: Request) {
     const { rows } = await poolRead.query(sql, params);
     return okJSON({ rows, paging: { limit, offset, count: rows.length } }, 30);
   } catch (e) {
+    if (e instanceof Response) return e;
     return serverError(e);
   }
 }
