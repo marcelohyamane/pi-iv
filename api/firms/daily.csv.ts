@@ -1,29 +1,8 @@
 // api/firms/daily.csv.ts
-// topo do arquivo
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { poolRead } from '../_lib/db_read'; // << usar o seu pool
+import { poolRead } from '../_lib/db_read'; // usa o pool central
 
-
-// ===== Pool de leitura (readonly) =====
-const connStr = process.env.DATABASE_URL_READONLY ?? process.env.DATABASE_URL;
-if (!connStr) throw new Error('DATABASE_URL_READONLY (ou DATABASE_URL) não configurada');
-
-const poolRead = new Pool({
-  connectionString: connStr,
-  ssl: { rejectUnauthorized: false },
-  max: 5,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-  application_name: 'firms_daily_csv',
-});
-poolRead.on('connect', (client) => {
-  client.query(`
-    SET statement_timeout = '20s';
-    SET idle_in_transaction_session_timeout = '10s';
-  `).catch(() => {});
-});
-
-// ===== Util =====
+// ===== Utils locais =====
 function clampWindow(from: Date, to: Date): { from: Date; to: Date } {
   const MAX_DAYS = 90;
   const msDay = 24 * 60 * 60 * 1000;
