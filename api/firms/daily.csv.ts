@@ -43,8 +43,7 @@ SELECT
   AVG(frp_medio)    AS frp_medio
 FROM public.mv_firms_diario
 WHERE dt >= $1 AND dt < $2
-GROUP BY dt
-ORDER BY dt;
+GROUP BY dt;
     `;
 
     // Se quiser p95 explicitamente
